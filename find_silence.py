@@ -1,7 +1,28 @@
 import audio
+import math
 import numpy as np
 from pathlib import Path
 import soundfile as sf
+
+def find_closest_silence_with_sample_index(sample_index, silences, sr, 
+    max_distance = 5):
+    return find_closest_silence(sample_index / sr, silences, max_distance)
+
+def find_closest_silence(seconds, silences, max_distance = 60):
+    start_distances = [abs(seconds - s['start']) for s in silences]
+    end_distances = [abs(seconds - s['end']) for s in silences]
+    shortest_distance = math.inf
+    for i, (s, e) in enumerate(zip(start_distances, end_distances)):
+        d = min(s, e)
+        if d < shortest_distance:
+            shortest_distance = d
+            closest_index = i
+    if max_distance <= shortest_distance:
+        m = "No silence within {max_distance} seconds"
+        m += f", closest is {shortest_distance} seconds away"
+        m += f" for time {seconds}"
+        raise ValueError(m)
+    return silences[closest_index]
 
 
 def find_silences(path ='', signal = None, sr = None, frame_ms=20.0, 
