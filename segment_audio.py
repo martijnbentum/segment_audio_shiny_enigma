@@ -1,14 +1,14 @@
 import audio
-import copy
-import json
+import find_silence
+import metadata
 from pathlib import Path
 from progressbar import progressbar
 import utils 
 
-
 def segment_audio(audio_filename, tag = None, segment_duration = 30, 
     start_time = None, end_time = None, n_segments = None, 
-    sample_rate = 16000, drop_last = True, save = False, overwrite = False):
+    sample_rate = 16000, drop_last = True, save = False, overwrite = False,
+    max_distance_silence = 60):
     if not overwrite and save:
         output_dir, exists = utils.make_output_directory_name(audio_filename)
         if exists:
@@ -18,9 +18,12 @@ def segment_audio(audio_filename, tag = None, segment_duration = 30,
 
     segment_length = int(sample_rate * segment_duration)
     y, _ = audio.load_audio(audio_filename, sr=sample_rate)
+    silences = find_silence.find_silences(signal = y, sr = sample_rate,
+        add_zero_crossings = True)
+
     total_samples = len(y)
 
-    start_time, end_time, start_sample, final_sample = utils.handle_start_end(
+    start_time, end_time, start_sample, final_sample = metadata.handle_start_end(
         start_time=start_time, end_time=end_time, audio_filename=audio_filename,
         total_n_samples=total_samples, y=y, sample_rate=sample_rate,
         tag = tag, overwrite=overwrite)
@@ -38,13 +41,17 @@ def segment_audio(audio_filename, tag = None, segment_duration = 30,
             break
         start_sample, end_sample = get_start_and_end_sample_indices(
             start_sample, segment_length, y)
+        silence = find_silence.find_closest_silence_with_sample_index(
+            end_sample, silences, sample_rate, max_distance_silence)
+            
+        end_sample = silence['zero_crossings'][2]
         if end_sample >= final_sample and drop_last:
             print("Reached end of the file. Dropping last segment")
             break
         segment_filename = make_segment_filename(audio_filename, tag, index, 
             start_sample, end_sample)
-        segment = make_segment(y, audio_filename, segment_filename, index,
-            start_sample, end_sample, sample_rate)
+        segment = make_segment(y, audio_filename, tag, segment_filename, index,
+            start_sample, end_sample, sample_rate,silence = silence)
         segments.append(segment)
         start_sample = end_sample
         index += 1
@@ -68,20 +75,7 @@ def save_segments(segments, sr, audio_filename, tag, overwrite = False,
         audio.save_audio(y, output_filename, sr, subtype = subtype)
         print(f"Saved segment: {output_filename}")
     print(f"Saved {len(segments)} segments to {output_dir}")
-    save_segments_json(segments, output_dir)
-
-def save_segments_json(segments, output_dir):
-    segments = copy.deepcopy(segments)
-    for segment in segments:
-        del segment['audio_segment'] 
-    audio_filename = segments[0]["audio_filename"]
-    n_segments = len(segments)
-    duration = int(round(sum([s["duration"] for s in segments]) / n_segments))
-    f = Path(output_dir) / f"{Path(audio_filename).stem}"
-    json_filename = str(f) + f"_segments-{n_segments}_duration-{duration}.json"
-    with open(json_filename, "w") as f:
-        json.dump(segments, f, indent=4)
-    print(f"Saved segments metadata to {json_filename}")
+    metadata.save_metadata(segments, output_dir)
 
 def get_start_and_end_sample_indices(start_sample, segment_length, y):
     total_samples = len(y)
@@ -94,8 +88,8 @@ def get_start_and_end_sample_indices(start_sample, segment_length, y):
         raise ValueError(m)
     return start_sample, end_sample 
 
-def make_segment(y, audio_filename, segment_filename, segment_index, 
-    start_sample, end_sample, sample_rate):
+def make_segment(y, audio_filename, tag, segment_filename, segment_index, 
+    start_sample, end_sample, sample_rate, silence):
     if end_sample > len(y):
         end_sample = len(y)
         shorter = True
@@ -104,16 +98,18 @@ def make_segment(y, audio_filename, segment_filename, segment_index,
         raise ValueError(f"start_sample >= len(y), {start_sample} >= {len(y)}")
     segment = {
         "audio_filename": audio_filename,
+        "tag": tag,
         "segment_filename": segment_filename,
         "segment_index": segment_index,
-        "start": start_sample / sample_rate,
-        "end": end_sample / sample_rate,
+        "start_time": start_sample / sample_rate,
+        "end_time": end_sample / sample_rate,
         "duration": (end_sample - start_sample) / sample_rate,
         "start_sample": start_sample,
         "end_sample": end_sample,
         "sample_rate": sample_rate,
         "audio_segment": y[start_sample:end_sample],
-        "shorter": shorter
+        "shorter": shorter,
+        "silence": silence
     }
     return segment
 
@@ -126,5 +122,4 @@ def make_segment_filename(audio_filename, tag, segment_index, start_sample,
     segment_filename += f"_n-{segment_index}"
     segment_filename += ".wav"
     return segment_filename
-
 
