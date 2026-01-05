@@ -7,51 +7,32 @@ from pathlib import Path
 metadata_dir = Path('metadata/')
 
 def audio_filename_to_summary(audio_filename):
-    segment_directories = audio_filename_to_ordered_segment_directories(
-        audio_filename)
+    '''print a summary of segment metadata for a given audio filename
+    '''
+    segment_directory = utils.find_segment_directory(audio_filename)
     end_sample, _ = audio_filename_to_end_sample(audio_filename)
     metadatas = []
     total_duration = 0.0
-    tags = []
     segment_durations = []
     n_segments = []
     print('\n' + '-' * 40)
     print(f"Summary for: {audio_filename}")
-    print(f"Found {len(segment_directories)} segment directories") 
-    print(f"directories: \n"+ '\n'.join(list(map(str,segment_directories))))
+    print(f"Found segment directory {segment_directory}") 
     print('\n' + '-' * 40)
-    for d in segment_directories:
-        metadata = segment_dir_to_metadata(d)
-        tags.append(metadata['tag'])
-        segment_durations.append(metadata['segment_duration'])
-        n_segments.append(metadata['n_segments'])
-        total_duration += metadata['duration']
-        summary = metadata_to_summary(metadata)
-        print(f"Segment directory: {d}")
-        print(summary)
-        print("-" * 40)
+    metadata = audio_filename_to_metadata(audio_filename)
+    segment_durations = metadata['segment_durations']
+    n_segments = metadata['n_segments']
+    total_duration = metadata['duration']
+    print("-" * 40)
     m = f"Audio filename: {audio_filename}\n"
-    m += f"Tags: {tags}\n"
     m += f"Number of segments: {n_segments}\n"
-    m += f"Segment durations: {segment_durations}\n"
-    m += f"Total duration across {len(segment_directories)} "
-    m += f"segment directories: {total_duration:2f} seconds\n"
+    m += f"Segment durations: {', '.join(map(str,map(int,segment_durations)))}\n"
+    m += f"avg segment duration: {metadata['average_segment_duration']} seconds\n"
+    m += f"Total duration: {total_duration:.3f} seconds\n"
     m += f"End sample of last segment: {end_sample}\n"
     end_time = end_sample / metadata['sample_rate']
-    m += f"End time of last segment: {end_time:2f} seconds\n"
+    m += f"End time of last segment: {end_time:.3f} seconds\n"
     print(m)
-    
-def metadata_to_summary(metadata):
-    m = f"filename: {metadata['audio_filename']}\n"
-    m += f"tag: {metadata['tag']}\n"
-    m += f'start sample: {metadata["start_sample"]}, '
-    m += f'end sample: {metadata["end_sample"]}\n'
-    m += f"start time: {metadata['start_time']},  "
-    m += f"end time: {metadata['end_time']}, "
-    m += f"duration: {metadata['duration']} seconds\n"
-    m += f"n_segments: {metadata['n_segments']}\n"
-    m += f"segment duration: {metadata['segment_duration']} seconds\n"
-    return m
     
 def segment_dir_to_metadata(segment_dir = None, json_filename = None):
     '''load segment metadata from a json file for a given segment directory
@@ -78,14 +59,18 @@ def segment_dir_to_metadata(segment_dir = None, json_filename = None):
         metadata = json.load(f)
     return metadata
 
-def audio_filename_to_metadata(audio_filename, tag = None):
-    d, exists = utils.make_output_directory_name(audio_filename, tag)
+def audio_filename_to_metadata(audio_filename) :
+    '''load segment metadata for a given audio filename
+    '''
+    d, exists = utils.make_output_directory_name(audio_filename)
     if not exists:
         raise ValueError(f"No segment directory found for {audio_filename}")
     metadata = segment_dir_to_metadata(d)
     return metadata
 
 def metadata_to_audio_filename(metadata):
+    '''get the audio filename from a metadata file.
+    '''
     return metadata[0]['audio_filename']
 
 def directory_to_end_sample(segment_directory):
@@ -100,29 +85,10 @@ def directory_to_end_sample(segment_directory):
         raise ValueError(f"Invalid end samples in {segment_directory}")
     return end_sample
     
-def audio_filename_to_end_sample(audio_filename):
-    '''find the end_sample of the last segment for the last segment directory
-    for a given audio_filename
-    '''
-    directories = utils.audio_filename_to_segment_directories(audio_filename)
-    last_end_sample = 0
-    last_end_sample_directory = None
-    for directory in directories:
-        try:
-            end_sample = directory_to_end_sample(directory)
-            if end_sample > last_end_sample:
-                last_end_sample = end_sample
-                last_end_sample_directory = directory
-        except ValueError as e:
-            print(e)
-            continue
-    end_sample, segment_directory = last_end_sample, last_end_sample_directory
-    return end_sample, segment_directory
-
-
 def handle_start_end(start_time = None, end_time = None, audio_filename = None, 
     total_n_samples = None, y = None, sample_rate = 16000,
-    tag = None, overwrite = None, ignore_existing_directories = False):
+    overwrite = None):
+    '''sets and validates start and end times and samples for an audio file'''
     # handle total n samples
     if y is None and total_n_samples is None:
         if audio_filename is None:
@@ -131,25 +97,6 @@ def handle_start_end(start_time = None, end_time = None, audio_filename = None,
         y, _ = audio.load_audio(audio_filename, sr=sample_rate)
         total_n_samples = len(y)
     # handle start time
-    if audio_filename and ignore_existing_directories is False:
-        segment_directories = utils.audio_filename_to_segment_directories(
-            audio_filename, ordered = True)
-        if segment_directories and start_time is None:
-            last_end_sample, _ = audio_filename_to_end_sample(
-                audio_filename)
-                
-            start_sample = last_end_sample
-            start_time = start_sample / sample_rate
-        elif overwrite and len(segment_directories) == 1:
-            name, _= utils.make_output_directory_name(audio_filename, tag)
-            if name == segment_directories[0]:
-                start_sample = int(start_time * sample_rate) 
-        elif segment_directories and start_time is not None:
-            m = f"start_time provided but segment directories exist for "
-            m += f"{audio_filename}, please set start_time=None to "
-            m += f"continue from the end of the last segment"
-            m += f" or set ignore_existing_directories=True to ignore "
-            raise ValueError(m)
     if start_time is None:
         start_time = 0.0
         start_sample = 0
@@ -166,16 +113,16 @@ def handle_start_end(start_time = None, end_time = None, audio_filename = None,
             final_sample = total_n_samples
     return start_time, end_time, start_sample, final_sample
 
-
 def save_metadata(segments, output_dir):
+    '''save segment metadata to a json file in the metadata directory
+    and the segment output directory.
+    '''
     segments = copy.deepcopy(segments)
     for segment in segments:
         del segment['audio_segment'] 
     d = {'segments':segments, 'output_dir': str(output_dir)}
     audio_filename = segments[0]["audio_filename"]
     d['audio_filename'] = audio_filename
-    tag = segments[0]['tag']
-    d['tag'] = tag 
     n_segments = len(segments)
     d['n_segments'] = n_segments
     d['start_sample'] = segments[0]['start_sample']
@@ -185,27 +132,48 @@ def save_metadata(segments, output_dir):
     d['start_time'] = segments[0]['start_time']
     d['end_time'] = segments[-1]['end_time']
     d['duration'] = segments[-1]['end_time'] - segments[0]['start_time']
-    x = int(round(sum([s["duration"] for s in segments]) / n_segments))
-    d['segment_duration'] = x
+    durations = [s['duration'] for s in segments]
+    x = int(round(sum(durations) / n_segments))
+    d['average_segment_duration'] = x
+    d['segment_durations'] = durations
+    od = f'{output_dir}/' 
+    d['segment_filenames'] = [od + s['segment_filename'] for s in segments]
     for directory in [metadata_dir, output_dir]:
-        jf = Path(directory) / f"{Path(audio_filename).stem}_{tag}"
-        jf = str(jf) + f"_segments-{n_segments}_duration-{x}.json"
+        jf = Path(directory) / f"{Path(audio_filename).stem}.json"
         json_filename = jf
         with open(json_filename, "w") as f:
             json.dump(d, f, indent=4)
         print(f"Saved segments metadata to {json_filename}")
     return d
 
-def audio_filename_to_ordered_segment_directories(audio_filename):
-    segment_directories = utils.audio_filename_to_segment_directories(
-        audio_filename)
-    ordered = order_segment_directories(segment_directories)
-    return ordered
+def audio_filename_to_metadata_info(audio_filename):
+    '''get metadata info (without segments) for a given audio filename
+    '''
+    d = audio_filename_to_metadata(audio_filename)
+    del d['segments']
+    return d
 
-def order_segment_directories(segment_directories):
-    filenames = [str(x).split('_')[0] for x in segment_directories]
-    if len(set(filenames)) != 1:
-        raise ValueError("segment directories must have the same audio filename")
-    f = directory_to_end_sample
-    output = sorted(segment_directories, key=lambda x: f(x))
-    return output
+def audio_filename_to_metadata(audio_filename):
+    '''load the metadata for a given audio filename.
+    '''
+    f = get_metadata_filename(audio_filename)
+    if f is None:
+        print(f"No metadata file found for {audio_filename}")
+        return None
+    metadata = load_metadata(f)
+    return metadata
+
+def get_metadata_filename(audio_filename):
+    '''get the metadata filename for a given audio filename.
+    '''
+    filename = metadata_dir / f"{Path(audio_filename).stem}.json"
+    if filename.is_file():
+        return filename
+
+def load_metadata(json_filename):
+    '''load metadata from a given json filename.
+    '''
+    print(f"Loading metadata from {json_filename}")
+    with open(json_filename, 'r') as f:
+        metadata = json.load(f)
+    return metadata
