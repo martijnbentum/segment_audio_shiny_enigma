@@ -5,9 +5,9 @@ from pathlib import Path
 from progressbar import progressbar
 import utils 
 
-def segment_audio(audio_filename, segment_duration = 30, 
+def segment_audio(audio_filename, segment_duration = 300, 
     start_time = None, end_time = None, n_segments = None, 
-    sample_rate = 16000, drop_last = True, save = False, overwrite = False,
+    sample_rate = 16000, drop_last = False, save = False, overwrite = False,
     max_distance_silence = 60):
     '''segment an audio file into segments of approximately segment_duration
     seconds, adjusting segment boundaries to the nearest silence and
@@ -44,6 +44,7 @@ def segment_audio(audio_filename, segment_duration = 30,
     index = 1
     n = int((total_samples / segment_length)) + 1
     for _ in progressbar(range(n)):
+        print(f'----- {index} -----')
         if n_segments is not None and index > n_segments:
             print(f"Reached max number of segments: {n_segments}")
             break
@@ -60,16 +61,16 @@ def segment_audio(audio_filename, segment_duration = 30,
             silence = find_silence.find_closest_silence_with_sample_index(
                 end_sample, silences, sample_rate, max_distance_silence,
                 ensure_zero_crossing=True)
-            silence_zero_crossing_index = 2    
-            if len(silence['zero_crossings']) < 3:
-                silence_zero_crossing_index = -1
-                m = f"Warning: less than 3 zero crossings in silence "
-                m = f'{silence}, using last zero crossing'
-            end_sample = silence['zero_crossings'][silence_zero_crossing_index]
+            end_sample = silence['closest_zero_crossing']
+            print('silence:',silence['start'], silence['end'],silence['duration'])
+            print('silence:',silence['start_sample'], silence['end_sample'],)
+        # check if we are within max_distance_silence of the end
         from_end = (final_sample - end_sample) / sample_rate
         if from_end < max_distance_silence: end_sample = final_sample
 
         print(f'start_sample: {start_sample}, end_sample: {end_sample}')
+        print(f'start time: {start_sample / sample_rate}, ',
+            f'end time: {end_sample / sample_rate}')
         print(f'segment duration: {(end_sample - start_sample) / sample_rate}')
         segment_filename = make_segment_filename(audio_filename, index, 
             start_sample, end_sample)
@@ -113,7 +114,7 @@ def get_end_sample_index(start_sample, segment_length, y):
     total_samples = len(y)
     target_end = start_sample + segment_length
     if target_end >= total_samples:
-        return start_sample, target_end 
+        return total_samples
     end_sample = audio.next_zero_crossing(y, target_end)
     if end_sample <= start_sample:  # safety net
         m = f"end_sample ({end_sample}) <= start_sample ({start_sample})"
